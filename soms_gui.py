@@ -32,6 +32,10 @@ class SOMSApp:
             messagebox.showerror("Database Error", str(err))
             return []
 
+    def clear_root(self):
+        for widget in self.root.winfo_children():
+            widget.destroy()
+
     def create_sign_in(self):
         self.clear_root()
         self.root.configure(bg="#f0f4f7")
@@ -369,7 +373,266 @@ class SOMSApp:
             messagebox.showerror("Database Error", str(err))
 
     def open_membership_management(self):
-        messagebox.showinfo("Coming Soon", "Membership Management module will be implemented next.")
+        self.clear_root()
+        self.root.configure(bg="#f0f4f7")
+
+        tk.Label(self.root, text="Membership Management", font=("Helvetica", 20, "bold"), bg="#f0f4f7").pack(pady=10)
+
+        control_frame = tk.Frame(self.root, bg="#f0f4f7")
+        control_frame.pack(fill="x", padx=10, pady=5)
+
+        tk.Label(control_frame, text="Search Student (Name/ID):", bg="#f0f4f7").pack(side=tk.LEFT)
+        search_entry = tk.Entry(control_frame)
+        search_entry.pack(side=tk.LEFT, padx=5)
+
+        tk.Button(control_frame, text="Search", bg="#4a90e2", fg="white", command=lambda: self.search_member(search_entry.get())).pack(side=tk.LEFT)
+
+        add_btn = tk.Button(control_frame, text="Add member", font=("Helvetica", 14, "bold"), bg="#4caf50", fg="white", command=self.open_add_member_modal)
+        add_btn.pack(side=tk.RIGHT)
+
+        table_frame = tk.Frame(self.root)
+        table_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        xscroll = tk.Scrollbar(table_frame, orient="horizontal")
+        yscroll = tk.Scrollbar(table_frame, orient="vertical")
+        self.members_tree = ttk.Treeview(
+            table_frame,
+            columns=("id", "name", "gender", "status", "program", "unpaid_fees", "grad_date",
+                    "school_year", "membership_status", "batch", "semester", "committee", "role"),
+            show="headings",
+            xscrollcommand=xscroll.set,
+            yscrollcommand=yscroll.set
+        )
+        xscroll.config(command=self.members_tree.xview)
+        yscroll.config(command=self.members_tree.yview)
+        xscroll.pack(side=tk.BOTTOM, fill=tk.X)
+        yscroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.members_tree.pack(fill="both", expand=True)
+
+        for col in self.members_tree["columns"]:
+            self.members_tree.heading(col, text=col.replace("_", " ").capitalize())
+            self.members_tree.column(col, anchor="center", width=100, minwidth=100, stretch=True)
+
+        self.populate_members()
+
+    def open_add_member_modal(self):
+        modal = tk.Toplevel(self.root)
+        modal.title("Member Attributes")
+        modal.geometry("420x650")
+        modal.grab_set()
+
+        canvas = tk.Canvas(modal)
+        frame = tk.Frame(canvas)
+        scrollbar = tk.Scrollbar(modal, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        canvas.create_window((0, 0), window=frame, anchor='nw')
+
+        fields = {
+            "student_id": "Student ID",
+            "gender": "Gender",
+            "enrollment_status": "Enrollment Status",
+            "email_address": "Email Address",
+            "member_name": "Full Name",
+            "batch_year_of_enrollment": "Batch Year of Enrollment",
+            "degree_program": "Degree Program",
+            "member_total_unpaid_fees": "Total Unpaid Fees",
+            "graduation_date": "Graduation Date (YYYY-MM-DD)"
+        }
+
+        entries = {}
+        for i, (key, label) in enumerate(fields.items()):
+            tk.Label(frame, text=label).grid(row=i, column=0, padx=10, pady=5, sticky="e")
+            entry = tk.Entry(frame, width=30)
+            entry.grid(row=i, column=1, padx=10, pady=5)
+            entries[key] = entry
+
+        def open_member_serves_modal(student_id, organization_id):
+            serves_modal = tk.Toplevel(self.root)
+            serves_modal.title("Membership Relations")
+            serves_modal.geometry("400x400")
+            serves_modal.grab_set()
+
+            serves_fields = {
+                "school_year": "School Year",
+                "membership_status": "Membership Status",
+                "batch_year_of_membership": "Batch Year of Membership",
+                "semester": "Semester",
+                "committee_role": "Committee Role",
+                "committee": "Committee"
+            }
+
+            serves_entries = {}
+            for i, (key, label) in enumerate(serves_fields.items()):
+                tk.Label(serves_modal, text=label).grid(row=i, column=0, padx=10, pady=5, sticky="e")
+                entry = tk.Entry(serves_modal, width=30)
+                entry.grid(row=i, column=1, padx=10, pady=5)
+                serves_entries[key] = entry
+
+            def submit_serves():
+                sdata = {key: entry.get().strip() for key, entry in serves_entries.items() if key in serves_fields}
+                if not sdata.get("school_year") or not sdata.get("membership_status"):
+                    messagebox.showwarning("Input Error", "School year and membership status are required.", parent=serves_modal)
+                    return
+
+                try:
+                    conn = mysql.connector.connect(**DB_CONFIG)
+                    cursor = conn.cursor()
+                    insert_query = '''
+                        INSERT INTO member_serves (
+                            school_year, membership_status, batch_year_of_membership, semester,
+                            committee_role, committee, organization_id, student_id
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    '''
+                    cursor.execute(insert_query, (
+                        sdata.get("school_year"), sdata.get("membership_status"), sdata.get("batch_year_of_membership"),
+                        sdata.get("semester"), sdata.get("committee_role"), sdata.get("committee"),
+                        organization_id, student_id
+                    ))
+                    
+                    # Update member count
+                    cursor.execute('''
+                        UPDATE organization 
+                        SET no_of_members = no_of_members + 1 
+                        WHERE organization_id = %s
+                    ''', (organization_id,))
+
+                    conn.commit()
+                    conn.close()
+
+                    sql_line = f"""
+    INSERT INTO member_serves (
+        school_year, membership_status, batch_year_of_membership, semester,
+        committee_role, committee, organization_id, student_id
+    ) VALUES (
+        {sdata.get('school_year')}, '{sdata.get('membership_status')}', {sdata.get('batch_year_of_membership')},
+        '{sdata.get('semester')}', '{sdata.get('committee_role')}', '{sdata.get('committee')}',
+        {organization_id}, {student_id}
+    );
+
+    UPDATE organization 
+    SET no_of_members = no_of_members + 1 
+    WHERE organization_id = {organization_id};
+    """
+                    with open("soms_db.sql", "a") as f:
+                        f.write(sql_line)
+
+                    messagebox.showinfo("Success", "Membership relation added successfully.", parent=serves_modal)
+                    serves_modal.destroy()
+                    self.open_membership_management()
+                except mysql.connector.Error as err:
+                    messagebox.showerror("Database Error", str(err), parent=serves_modal)
+
+            submit_btn = tk.Button(serves_modal, text="Submit", bg="#4caf50", fg="white", command=submit_serves)
+            submit_btn.grid(row=len(serves_fields), column=0, columnspan=2, pady=20)
+
+        def submit_member():
+            data = {key: entry.get().strip() for key, entry in entries.items()}
+            required_keys = ["student_id", "gender", "enrollment_status", "email_address", "member_name", "batch_year_of_enrollment", "degree_program"]
+            if not all(data.get(k) for k in required_keys):
+                messagebox.showwarning("Input Error", "All required fields must be filled out.", parent=modal)
+                return
+
+            try:
+                conn = mysql.connector.connect(**DB_CONFIG)
+                cursor = conn.cursor()
+                insert_query = '''
+                    INSERT INTO member (
+                        student_id, gender, enrollment_status, email_address,
+                        member_name, batch_year_of_enrollment, degree_program,
+                        member_total_unpaid_fees, graduation_date
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                '''
+                cursor.execute(insert_query, (
+                    data.get("student_id"), data.get("gender"), data.get("enrollment_status"), data.get("email_address"),
+                    data.get("member_name"), data.get("batch_year_of_enrollment"), data.get("degree_program"),
+                    data.get("member_total_unpaid_fees"), data.get("graduation_date")
+                ))
+                conn.commit()
+                conn.close()
+
+                sql_line = f"""
+    INSERT INTO member (
+        student_id,
+        gender,
+        enrollment_status,
+        email_address,
+        member_name,
+        batch_year_of_enrollment,
+        degree_program,
+        member_total_unpaid_fees,
+        graduation_date
+    ) VALUES (
+        {data.get('student_id')},
+        '{data.get('gender')}',
+        '{data.get('enrollment_status')}',
+        '{data.get('email_address')}',
+        '{data.get('member_name')}',
+        {data.get('batch_year_of_enrollment')},
+        '{data.get('degree_program')}',
+        {data.get('member_total_unpaid_fees')},
+        '{data.get('graduation_date')}'
+    );
+    """
+                with open("soms_db.sql", "a") as f:
+                    f.write(sql_line)
+
+                modal.destroy()
+                open_member_serves_modal(data.get("student_id"), self.selected_org_id)
+
+            except mysql.connector.Error as err:
+                messagebox.showerror("Database Error", str(err), parent=modal)
+
+        submit_btn = tk.Button(frame, text="Submit", bg="#4caf50", fg="white", command=submit_member)
+        submit_btn.grid(row=len(fields), column=0, columnspan=2, pady=20)
+
+
+   
+
+
+    def populate_members(self):
+        self.members_tree.delete(*self.members_tree.get_children())
+        org_id = getattr(self, "selected_org_id", None)
+        if not org_id:
+            messagebox.showwarning("Missing Organization", "No organization selected.")
+            return
+
+        try:
+            conn = mysql.connector.connect(**DB_CONFIG)
+            cursor = conn.cursor()
+            query = '''
+                SELECT m.student_id, m.member_name, m.gender, m.enrollment_status, m.degree_program,
+                    m.member_total_unpaid_fees, m.graduation_date,
+                    s.school_year, s.membership_status, s.batch_year_of_membership, s.semester, s.committee, s.committee_role
+                FROM member m
+                JOIN member_serves s ON m.student_id = s.student_id
+                WHERE s.organization_id = %s
+            '''
+            cursor.execute(query, (org_id,))
+            for row in cursor.fetchall():
+                self.members_tree.insert("", "end", values=row)
+
+        except mysql.connector.Error as err:
+            messagebox.showerror("Database Error", str(err))
+
+
+
+    def update_member(self, student_id):
+        print(f"Update logic for student_id={student_id}")
+
+
+
+    def delete_member(self, student_id):
+        print(f"Delete logic for student_id={student_id}")
+
+
+
+    def search_member(self, keyword):
+        print(f"Search for member with keyword: {keyword}")
+
+
 
     def open_fees_management(self):
         messagebox.showinfo("Coming Soon", "Fees Management module will be implemented next.")
