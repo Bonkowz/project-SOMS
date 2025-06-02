@@ -1,0 +1,83 @@
+SELECT
+    m.member_name,
+    f.amount,
+    f.payment_status,
+    s.batch_year_of_membership,
+    s.semester AS member_semester, -- Renamed to avoid confusion with fee.semester
+    s.school_year AS member_school_year, -- Renamed to avoid confusion with fee.school_year
+    s.organization_id AS member_org_id, -- Renamed to avoid confusion with fee.organization_id
+    f.school_year AS fee_school_year,
+    f.semester AS fee_semester,
+    f.organization_id AS fee_org_id
+FROM
+    member m
+INNER JOIN
+    fee f ON m.student_id = f.student_id
+INNER JOIN
+    member_serves s ON m.student_id = s.student_id
+WHERE
+    f.payment_status = 'Not Paid'
+    AND f.organization_id = 101 -- Ensure the fee is specifically for organization 101
+    AND f.school_year = 2024
+    AND f.semester = '1'
+    AND s.organization_id = 101 -- Ensure the member was serving in organization 101
+    AND s.school_year = f.school_year -- Ensure member_serves entry matches fee's school_year
+    AND s.semester = f.semester;   -- Ensure member_serves entry matches fee's semester
+
+def search_organization(self):
+        org_id = self.org_search_combo.get().strip()
+        if not org_id:
+            self.load_organizations()
+            return
+            
+        try:
+            conn = mysql.connector.connect(**DB_CONFIG)
+            cursor = conn.cursor()
+            
+            for item in self.org_tree.get_children():
+                self.org_tree.delete(item)            
+                
+            query = '''
+                SELECT organization_id, organization_name, organization_type, 
+                       no_of_members, total_paid_fees, total_unpaid_fees
+                FROM organization
+                WHERE organization_id = %s
+            '''
+            cursor.execute(query, (org_id,))
+            
+            rows = cursor.fetchall()
+            if rows:
+                for row in rows:
+                    self.org_tree.insert('', 'end', values=row)
+            else:
+                messagebox.showinfo("Not Found", "Organization not found.")
+                
+            conn.close()
+            
+        except mysql.connector.Error as err:
+            messagebox.showerror("Database Error", str(err))
+
+    def load_organizations(self):
+        try:
+            conn = mysql.connector.connect(**DB_CONFIG)
+            cursor = conn.cursor()
+            
+            for item in self.org_tree.get_children():
+                self.org_tree.delete(item)            
+                
+            query = '''
+                SELECT organization_id, organization_name, organization_type, 
+                       no_of_members, total_paid_fees, total_unpaid_fees
+                FROM organization
+            '''
+            cursor.execute(query)
+            
+            for row in cursor.fetchall():
+                self.org_tree.insert('', 'end', values=row)
+            conn.close()
+            
+        except mysql.connector.Error as err:
+            messagebox.showerror("Database Error", str(err))
+
+    def add_organization(self):
+        pass
