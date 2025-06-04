@@ -46,7 +46,8 @@ class MembersGUI:
                               bg="#e53935", fg="white", relief="flat", command=self.delete_member)
         delete_btn.pack(side=tk.LEFT, padx=5)
 
-        columns = ("Id", "Name", "Email", "Gender", "Enrollment Status", "Graduation Date", "Degree Program", "Unpaid Fees",
+        # UPDATED: Add 'Batch Year of Enrollment' to columns
+        columns = ("Id", "Name", "Email", "Gender", "Enrollment Status", "Batch Year of Enrollment", "Graduation Date", "Degree Program", "Unpaid Fees",
                    "Organization ID", "Membership Batch", "Membership Status", "Committee Role", "Committee")
         column_widths = {
             "Id": 80,
@@ -54,6 +55,7 @@ class MembersGUI:
             "Email": 150,
             "Gender": 60,
             "Enrollment Status": 80,
+            "Batch Year of Enrollment": 120, # Added width for the new column
             "Graduation Date": 100,
             "Degree Program": 100,
             "Unpaid Fees": 80,
@@ -84,9 +86,15 @@ class MembersGUI:
         self.member_tree.pack(pady=10, padx=10, fill="both", expand=True)
 
     def search_member(self):
-        student_id = self.member_search_entry.get().strip()
-        if not student_id:
+        student_id_str = self.member_search_entry.get().strip()
+        if not student_id_str:
             self.load_members()
+            return
+
+        try:
+            student_id = int(student_id_str)
+        except ValueError:
+            messagebox.showerror("Input Error", "Student ID must be a number.")
             return
 
         for item in self.member_tree.get_children():
@@ -94,7 +102,7 @@ class MembersGUI:
 
         query = '''
             SELECT m.student_id, m.member_name, m.email_address, m.gender, m.enrollment_status,
-                   m.graduation_date, m.degree_program, m.member_total_unpaid_fees, ms.organization_id,
+                   m.batch_year_of_enrollment, m.graduation_date, m.degree_program, m.member_total_unpaid_fees, ms.organization_id,
                    ms.batch_year_of_membership, ms.membership_status, ms.committee_role, ms.committee
             FROM member m LEFT JOIN member_serves ms ON m.student_id = ms.student_id
             WHERE m.student_id = %s
@@ -111,7 +119,7 @@ class MembersGUI:
 
         query = '''
             SELECT m.student_id, m.member_name, m.email_address, m.gender, m.enrollment_status,
-                   m.graduation_date, m.degree_program, m.member_total_unpaid_fees, ms.organization_id,
+                   m.batch_year_of_enrollment, m.graduation_date, m.degree_program, m.member_total_unpaid_fees, ms.organization_id,
                    ms.batch_year_of_membership, ms.membership_status, ms.committee_role, ms.committee
             FROM member m LEFT JOIN member_serves ms ON m.student_id = ms.student_id
         '''
@@ -138,7 +146,6 @@ class MembersGUI:
             ("Org School Year (for serves)", "org_school_year"),
             ("Semester (for serves)", "semester"),
             ("Batch Year of Membership (for serves)", "batch_year_of_membership"),
-            ("Membership Status (for serves)", "membership_status"),
             ("Committee Role (for serves)", "committee_role"),
             ("Committee (for serves)", "committee"),
         ]
@@ -166,7 +173,7 @@ class MembersGUI:
                 data["enrollment_status"],
                 data["email_address"],
                 data["member_name"],
-                data["batch_year_of_enrollment"],
+                data["batch_year_of_enrollment"], # Ensure this is included here
                 data["degree_program"],
                 data["graduation_date"] if data["graduation_date"] else None,
             )
@@ -189,19 +196,18 @@ class MembersGUI:
             )
 
             try:
-                # Insert into member table
-                self.db.execute_query(member_query, member_params)
+                member_rows_affected = self.db.execute_query(member_query, member_params)
+                serves_rows_affected = self.db.execute_query(serves_query, serves_params)
 
-                # Insert into member_serves table
-                self.db.execute_query(serves_query, serves_params)
+                if member_rows_affected > 0 and serves_rows_affected > 0:
+                    self.db.execute_query("UPDATE organization SET no_of_members = no_of_members + 1 WHERE organization_id = %s;",
+                                        (data["organization_id_serves"],))
+                    messagebox.showinfo("Success", "Member added successfully!")
+                    popup.destroy()
+                    self.load_members()
+                else:
+                    messagebox.showerror("Error adding member", "Failed to add member to both tables.")
 
-                # Update member count in organization
-                self.db.execute_query("UPDATE organization SET no_of_members = no_of_members + 1 WHERE organization_id = %s;",
-                                      (data["organization_id_serves"],))
-
-                messagebox.showinfo("Success", "Member added successfully!")
-                popup.destroy()
-                self.load_members()
             except Exception as err:
                 messagebox.showerror("Error adding member", str(err))
 
@@ -210,9 +216,15 @@ class MembersGUI:
         submit_btn.grid(row=len(fields), column=0, columnspan=2, pady=20)
 
     def delete_member(self):
-        student_id = self.member_delete_entry.get().strip()
-        if not student_id:
+        student_id_str = self.member_delete_entry.get().strip()
+        if not student_id_str:
             messagebox.showwarning("Input Error", "Please enter a Student ID to delete.")
+            return
+
+        try:
+            student_id = int(student_id_str)
+        except ValueError:
+            messagebox.showerror("Input Error", "Student ID must be a number.")
             return
 
         confirm = messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete member with Student ID: {student_id}?")
@@ -220,22 +232,22 @@ class MembersGUI:
             return
 
         try:
-            # Get organization_id associated with the student before deletion to decrement member count
             org_id_query = "SELECT organization_id FROM member_serves WHERE student_id = %s"
             org_id_result = self.db.execute_query(org_id_query, (student_id,), fetch_type="one")
-            
-            delete_member_query = "DELETE FROM member WHERE student_id = %s"
-            result = self.db.execute_query(delete_member_query, (student_id,))
 
-            if result is not None: # Check if query executed without database error
-                if self.db.execute_query("SELECT ROW_COUNT()", fetch_type="one")[0] > 0: # Check if any row was affected
-                    messagebox.showinfo("Success", "Member deleted successfully.")
-                    if org_id_result:
-                        organization_id = org_id_result[0]
-                        self.db.execute_query("UPDATE organization SET no_of_members = no_of_members - 1 WHERE organization_id = %s;", (organization_id,))
-                    self.load_members()
-                else:
-                    messagebox.showinfo("Not Found", "Student ID not found.")
+            delete_member_query = "DELETE FROM member WHERE student_id = %s"
+            rows_affected = self.db.execute_query(delete_member_query, (student_id,))
+
+            if rows_affected > 0:
+                messagebox.showinfo("Success", "Member deleted successfully.")
+                if org_id_result:
+                    organization_id = org_id_result[0]
+                    self.db.execute_query("UPDATE organization SET no_of_members = no_of_members - 1 WHERE organization_id = %s;", (organization_id,))
+                self.load_members()
+            elif rows_affected == 0:
+                messagebox.showinfo("Not Found", "Student ID not found.")
+            else:
+                messagebox.showerror("Error deleting member", "An unknown database error occurred.")
             
         except Exception as err:
             messagebox.showerror("Error deleting member", str(err))
